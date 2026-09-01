@@ -10,6 +10,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 
 class SyntaxHighlighter(private val language: String) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
+        // Prevent UI thread freezes on very large files by disabling highlighting
+        if (text.text.length > 5000) {
+            return TransformedText(text, OffsetMapping.Identity)
+        }
+
         val highlighted = buildAnnotatedString {
             append(text.text)
             
