@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.ProjectEntity
 import com.example.data.ProjectRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,7 +18,10 @@ data class EditorUiState(
     val project: ProjectEntity? = null,
     val currentTab: EditorTab = EditorTab.HTML,
     val isPreviewing: Boolean = false,
-    val fontSize: Float = 14f
+    val fontSize: Float = 14f,
+    val previewWidth: Int? = null, // null means fullscreen/match_parent
+    val previewHeight: Int? = null,
+    val previewZoom: Float = 1f
 )
 
 enum class EditorTab {
@@ -30,6 +35,8 @@ class EditorViewModel(
 
     private val _uiState = MutableStateFlow(EditorUiState())
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
+    
+    private var saveJob: Job? = null
 
     init {
         loadProject()
@@ -49,26 +56,45 @@ class EditorViewModel(
     fun togglePreview() {
         _uiState.update { it.copy(isPreviewing = !it.isPreviewing) }
     }
+    
+    fun setPreviewSize(width: Int?, height: Int?) {
+        _uiState.update { it.copy(previewWidth = width, previewHeight = height) }
+    }
+    
+    fun setPreviewZoom(zoom: Float) {
+        _uiState.update { it.copy(previewZoom = zoom) }
+    }
 
     fun updateHtml(html: String) {
         _uiState.update { state ->
             state.copy(project = state.project?.copy(htmlContent = html, updatedAt = System.currentTimeMillis()))
         }
+        debounceSave()
     }
 
     fun updateCss(css: String) {
         _uiState.update { state ->
             state.copy(project = state.project?.copy(cssContent = css, updatedAt = System.currentTimeMillis()))
         }
+        debounceSave()
     }
 
     fun updateJs(js: String) {
         _uiState.update { state ->
             state.copy(project = state.project?.copy(jsContent = js, updatedAt = System.currentTimeMillis()))
         }
+        debounceSave()
     }
 
-    fun saveProject() {
+    private fun debounceSave() {
+        saveJob?.cancel()
+        saveJob = viewModelScope.launch {
+            delay(1000) // 1 second debounce
+            saveProjectNow()
+        }
+    }
+
+    fun saveProjectNow() {
         viewModelScope.launch {
             _uiState.value.project?.let {
                 repository.updateProject(it)
@@ -86,6 +112,7 @@ class EditorViewModel(
             }
             state.copy(project = updatedProject)
         }
+        debounceSave()
     }
 
     fun changeFontSize(delta: Float) {
