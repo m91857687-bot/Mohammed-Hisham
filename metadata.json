@@ -1,0 +1,6 @@
+{
+  "name": "WebCode Studio",
+  "description": "An Android Native code editor for creating and testing HTML, CSS, and JavaScript web pages locally.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
