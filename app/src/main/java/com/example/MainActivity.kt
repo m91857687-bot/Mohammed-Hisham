@@ -20,6 +20,7 @@ import com.example.data.ProjectRepository
 import com.example.ui.screens.AboutScreen
 import com.example.ui.screens.EditorScreen
 import com.example.ui.screens.HomeScreen
+import com.example.ui.screens.TemplatesScreen
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.serialization.Serializable
 
@@ -47,6 +48,9 @@ object HomeRoute
 data class EditorRoute(val projectId: Int)
 
 @Serializable
+object TemplatesRoute
+
+@Serializable
 object AboutRoute
 
 @Composable
@@ -63,6 +67,7 @@ fun WebCodeStudioApp() {
                 onNavigateToEditor = { projectId ->
                     navController.navigate(EditorRoute(projectId))
                 },
+                onNavigateToTemplates = { navController.navigate(TemplatesRoute) },
                 onNavigateToAbout = {
                     navController.navigate(AboutRoute)
                 }
@@ -76,9 +81,17 @@ fun WebCodeStudioApp() {
                 onNavigateBack = { navController.navigateUp() }
             )
         }
+        composable<TemplatesRoute> {
+            TemplatesScreen(
+                repository = repository,
+                onNavigateToEditor = { projectId ->
+                    navController.navigate(EditorRoute(projectId)) { popUpTo(HomeRoute) }
+                },
+                onNavigateBack = { navController.navigateUp() }
+            )
+        }
         composable<AboutRoute> {
             AboutScreen(onNavigateBack = { navController.navigateUp() })
         }
     }
 }
-

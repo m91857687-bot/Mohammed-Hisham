@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -71,6 +72,17 @@ fun EditorScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     
+    var showExitConfirmation by remember { mutableStateOf(false) }
+    var showRenameFileDialogFor by remember { mutableStateOf<File?>(null) }
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.importFileWithOriginalName(uri)
+            Toast.makeText(context, "File Imported", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -86,6 +98,13 @@ fun EditorScreen(
         return
     }
     val project = uiState.project ?: return
+    BackHandler {
+        if (uiState.isPreviewing) {
+            viewModel.togglePreview()
+        } else {
+            showExitConfirmation = true
+        }
+    }
 
     val exportProject = {
         viewModel.saveCurrentFileNow()
@@ -107,6 +126,7 @@ fun EditorScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        gesturesEnabled = !uiState.isPreviewing,
         drawerContent = {
             ModalDrawerSheet(
                 modifier = Modifier.width(300.dp),
@@ -130,6 +150,9 @@ fun EditorScreen(
                 ) {
                     Text("Files", style = MaterialTheme.typography.titleSmall)
                     Row {
+                        IconButton(onClick = { filePickerLauncher.launch(arrayOf("*/*")) }) {
+                            Icon(Icons.Default.UploadFile, contentDescription = "Import File", tint = MaterialTheme.colorScheme.primary)
+                        }
                         IconButton(onClick = { imagePickerLauncher.launch("image/*") }) {
                             Icon(Icons.Default.Image, contentDescription = "Import Image", tint = MaterialTheme.colorScheme.primary)
                         }
@@ -180,10 +203,14 @@ fun EditorScreen(
                                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            
-                            if (uiState.files.size > 1) {
-                                IconButton(onClick = { viewModel.deleteFile(file) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
+                            Row {
+                                IconButton(onClick = { showRenameFileDialogFor = file }) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Rename", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                if (uiState.files.size > 1) {
+                                    IconButton(onClick = { viewModel.deleteFile(file) }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
+                                    }
                                 }
                             }
                         }
@@ -215,8 +242,10 @@ fun EditorScreen(
                         }
                     },
                     navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        TextButton(onClick = { showExitConfirmation = true }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Exit Project", tint = MaterialTheme.colorScheme.onSurface)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Exit", color = MaterialTheme.colorScheme.onSurface)
                         }
                     },
                     actions = {
@@ -235,13 +264,25 @@ fun EditorScreen(
                             Icon(Icons.Default.Save, contentDescription = "Save")
                         }
                         if (!isLandscape) {
-                            FilledTonalButton(
-                                onClick = { viewModel.togglePreview() },
-                                modifier = Modifier.padding(horizontal = 8.dp)
-                            ) {
-                                Icon(if (uiState.isPreviewing) Icons.Default.Code else Icons.Default.PlayArrow, contentDescription = null)
-                                Spacer(Modifier.width(4.dp))
-                                Text(if (uiState.isPreviewing) "Code" else "Run")
+                            if (uiState.isPreviewing) {
+                                Button(
+                                    onClick = { viewModel.togglePreview() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Exit Preview")
+                                }
+                            } else {
+                                FilledTonalButton(
+                                    onClick = { viewModel.togglePreview() },
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Run")
+                                }
                             }
                         }
                     }
@@ -282,6 +323,8 @@ fun EditorScreen(
             }
 
             val previewContent = @Composable {
+                val currentFileName = uiState.currentFile?.name ?: "index.html"
+                val startFileName = if (currentFileName.endsWith(".html")) currentFileName else "index.html"
                 Column(modifier = Modifier.fillMaxSize()) {
                     if (isLandscape) {
                         // Toolbar for preview in landscape
@@ -311,6 +354,7 @@ fun EditorScreen(
                     }
                     Box(modifier = Modifier.weight(1f).background(MaterialTheme.colorScheme.background)) {
                         PreviewWebView(
+                            startFileName = startFileName,
                             projectId = projectId,
                             previewWidth = uiState.previewWidth,
                             previewHeight = uiState.previewHeight,
@@ -349,6 +393,7 @@ fun EditorScreen(
         }
     }
     
+
     showRenameImageDialog?.let { uri ->
         AlertDialog(
             onDismissRequest = { showRenameImageDialog = null },
@@ -423,6 +468,59 @@ fun EditorScreen(
             }
         )
     }
+
+    showRenameFileDialogFor?.let { fileToRename ->
+        var renameFileTo by remember { mutableStateOf(fileToRename.name) }
+        AlertDialog(
+            onDismissRequest = { showRenameFileDialogFor = null },
+            title = { Text("Rename File") },
+            text = {
+                OutlinedTextField(
+                    value = renameFileTo,
+                    onValueChange = { renameFileTo = it },
+                    label = { Text("New filename") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (renameFileTo.isNotBlank() && renameFileTo != fileToRename.name) {
+                        viewModel.renameFile(fileToRename, renameFileTo)
+                        Toast.makeText(context, "Renamed", Toast.LENGTH_SHORT).show()
+                    }
+                    showRenameFileDialogFor = null
+                }) {
+                    Text("Rename")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameFileDialogFor = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showExitConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showExitConfirmation = false },
+            title = { Text("Exit Project") },
+            text = { Text("Are you sure you want to exit? Your changes are saved automatically.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showExitConfirmation = false
+                    onNavigateBack()
+                }) {
+                    Text("Exit")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitConfirmation = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -433,7 +531,7 @@ fun ConsoleDialog(
     onClear: () -> Unit,
     onCopyAll: () -> Unit
 ) {
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()) }
     
     BasicAlertDialog(
         onDismissRequest = onDismiss,
@@ -490,7 +588,7 @@ fun ConsoleDialog(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = dateFormat.format(Date(log.timestamp)),
+                                    text = dateFormat.format(java.util.Date(log.timestamp)),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

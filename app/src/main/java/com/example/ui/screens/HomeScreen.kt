@@ -21,15 +21,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.ProjectEntity
 import com.example.data.ProjectRepository
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     repository: ProjectRepository,
     onNavigateToEditor: (Int) -> Unit,
-    onNavigateToAbout: () -> Unit
+    onNavigateToAbout: () -> Unit,
+    onNavigateToTemplates: () -> Unit
 ) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
@@ -38,26 +38,8 @@ fun HomeScreen(
     )
     val projects by viewModel.allProjects.collectAsStateWithLifecycle()
 
-    var showCreateDialog by remember { mutableStateOf(false) }
-    var newProjectName by remember { mutableStateOf("") }
-    var selectedTemplate by remember { mutableStateOf("Default") }
     var showRenameDialogFor by remember { mutableStateOf<ProjectEntity?>(null) }
     
-    var projectToExport by remember { mutableStateOf<ProjectEntity?>(null) }
-    
-    val exportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/zip"),
-        onResult = { uri ->
-            uri?.let {
-                projectToExport?.let { project ->
-                    // Actually, the export logic is in EditorScreen.
-                    // For Home screen, we just show a toast or implement it fully.
-                    // To keep it simple in this update, we omit full export here since it's already in Editor.
-                }
-            }
-        }
-    )
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -70,7 +52,7 @@ fun HomeScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showCreateDialog = true }) {
+            FloatingActionButton(onClick = onNavigateToTemplates) {
                 Icon(Icons.Default.Add, contentDescription = "New Project")
             }
         }
@@ -96,8 +78,8 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Button(onClick = { showCreateDialog = true }) {
-                        Text("Create your first project")
+                    Button(onClick = onNavigateToTemplates) {
+                        Text("Explore Templates")
                     }
                 }
             }
@@ -116,69 +98,11 @@ fun HomeScreen(
                         onDelete = { viewModel.deleteProject(project.id) },
                         onDuplicate = { viewModel.duplicateProject(project) },
                         onRename = { showRenameDialogFor = project },
-                        onExport = {
-                            // No-op here, export is in Editor
-                        }
+                        onExport = {}
                     )
                 }
             }
         }
-    }
-
-    if (showCreateDialog) {
-        val templates = listOf("Default", "Bootstrap", "Tailwind", "Three.js")
-        
-        AlertDialog(
-            onDismissRequest = { showCreateDialog = false },
-            title = { Text("New Project") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = newProjectName,
-                        onValueChange = { newProjectName = it },
-                        label = { Text("Project Name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    
-                    Text("Select Template:", style = MaterialTheme.typography.titleSmall)
-                    
-                    templates.forEach { template ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedTemplate = template }
-                                .padding(vertical = 4.dp)
-                        ) {
-                            RadioButton(
-                                selected = selectedTemplate == template,
-                                onClick = { selectedTemplate = template }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(template)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (newProjectName.isNotBlank()) {
-                            viewModel.createProject(newProjectName, selectedTemplate) { newId ->
-                                showCreateDialog = false
-                                newProjectName = ""
-                                selectedTemplate = "Default"
-                                onNavigateToEditor(newId)
-                            }
-                        }
-                    }
-                ) { Text("Create") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCreateDialog = false }) { Text("Cancel") }
-            }
-        )
     }
 
     showRenameDialogFor?.let { project ->

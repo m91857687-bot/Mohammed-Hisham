@@ -7,6 +7,7 @@ import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -33,6 +34,7 @@ import java.io.File
 @Composable
 fun PreviewWebView(
     projectId: Int,
+    startFileName: String = "index.html",
     onConsoleMessage: (String, String) -> Unit,
     modifier: Modifier = Modifier,
     previewWidth: Int? = null,
@@ -45,7 +47,7 @@ fun PreviewWebView(
     val horizontalScroll = rememberScrollState()
 
     val projectDir = remember(projectId) { File(context.filesDir, "projects/project_$projectId") }
-    val startUrl = "https://appassets.androidplatform.net/projects/project_$projectId/index.html"
+    val startUrl = "https://appassets.androidplatform.net/projects/project_$projectId/$startFileName"
 
     Box(
         modifier = modifier
@@ -110,6 +112,13 @@ fun PreviewWebView(
                             setSupportZoom(true)
                             builtInZoomControls = true
                             displayZoomControls = false
+                            
+                            cacheMode = WebSettings.LOAD_NO_CACHE
+                            
+                            @Suppress("DEPRECATION")
+                            allowFileAccessFromFileURLs = true
+                            @Suppress("DEPRECATION")
+                            allowUniversalAccessFromFileURLs = true
                         }
                         
                         webViewClient = object : WebViewClient() {
@@ -131,21 +140,10 @@ fun PreviewWebView(
                                 return true
                             }
                         }
-                        
-                        // Error handling injection using Javascript Injection since we load standard files now
-                        val errorScript = """
-                            <script>
-                            window.onerror = function(message, source, lineno, colno, error) {
-                                console.error("Error: " + message + " at line " + lineno);
-                                return true;
-                            };
-                            </script>
-                        """.trimIndent()
-                        // Actually, with standard HTML, users should write their own, but WebView Console intercepts it anyway!
-                        // So no need to inject anything. The webChromeClient will catch console.error natively.
                     }
                 },
                 update = { webView ->
+                    webView.clearCache(true)
                     webView.loadUrl(startUrl)
                 }
             )

@@ -1,0 +1,1 @@
+sed -i '/fun deleteFile/i \    fun renameFile(projectId: Int, oldName: String, newName: String) {\n        val oldFile = File(getProjectDir(projectId), oldName)\n        val newFile = File(getProjectDir(projectId), newName)\n        if (oldFile.exists()) {\n            oldFile.renameTo(newFile)\n        }\n    }\n' app/src/main/java/com/example/data/FileManager.kt

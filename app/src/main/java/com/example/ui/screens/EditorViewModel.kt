@@ -113,6 +113,34 @@ class EditorViewModel(
         }
     }
 
+    fun renameFile(oldFile: File, newName: String) {
+        fileManager.renameFile(projectId, oldFile.name, newName)
+        val files = fileManager.listFiles(projectId)
+        val newFile = files.find { it.name == newName }
+        _uiState.update { 
+            it.copy(
+                files = files,
+                currentFile = if (it.currentFile?.name == oldFile.name) newFile else it.currentFile
+            )
+        }
+    }
+
+    fun importFileWithOriginalName(uri: android.net.Uri) {
+        val cursor = getApplication<Application>().contentResolver.query(uri, null, null, null, null)
+        var fileName = "imported_file"
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIndex != -1) {
+                    fileName = it.getString(nameIndex)
+                }
+            }
+        }
+        fileManager.importFileFromUri(projectId, uri, fileName)
+        val files = fileManager.listFiles(projectId)
+        _uiState.update { it.copy(files = files) }
+    }
+
     fun importImage(uri: android.net.Uri, fileName: String) {
         fileManager.importFileFromUri(projectId, uri, fileName)
         val files = fileManager.listFiles(projectId)
