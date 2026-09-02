@@ -1,8 +1,11 @@
 package com.example.ui.screens
 
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.data.FileManager
 import com.example.data.ProjectEntity
 import com.example.data.ProjectRepository
 import kotlinx.coroutines.flow.SharingStarted
@@ -10,7 +13,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class HomeViewModel(private val repository: ProjectRepository) : ViewModel() {
+class HomeViewModel(
+    application: Application,
+    private val repository: ProjectRepository
+) : AndroidViewModel(application) {
+
+    private val fileManager = FileManager(application)
 
     val allProjects: StateFlow<List<ProjectEntity>> = repository.allProjects
         .stateIn(
@@ -19,16 +27,20 @@ class HomeViewModel(private val repository: ProjectRepository) : ViewModel() {
             initialValue = emptyList()
         )
 
-    fun createProject(name: String, onProjectCreated: (Int) -> Unit) {
+    fun createProject(name: String, template: String, onProjectCreated: (Int) -> Unit) {
         viewModelScope.launch {
             val newProject = ProjectEntity(
                 name = name,
-                htmlContent = "<!DOCTYPE html>\n<html>\n<head>\n  <title>$name</title>\n</head>\n<body>\n  <h1>Hello, WebCode Studio!</h1>\n</body>\n</html>",
-                cssContent = "body {\n  font-family: sans-serif;\n  background-color: #f0f0f0;\n  display: flex;\n  justify-content: center;\n  align-items: center;\n  height: 100vh;\n  margin: 0;\n}\n\nh1 {\n  color: #333;\n}",
-                jsContent = "console.log('Project started!');"
+                htmlContent = "",
+                cssContent = "",
+                jsContent = ""
             )
-            val id = repository.insertProject(newProject)
-            onProjectCreated(id.toInt())
+            val id = repository.insertProject(newProject).toInt()
+            
+            // Apply the chosen template immediately
+            fileManager.applyTemplate(id, template)
+            
+            onProjectCreated(id)
         }
     }
 
@@ -57,11 +69,14 @@ class HomeViewModel(private val repository: ProjectRepository) : ViewModel() {
     }
 }
 
-class HomeViewModelFactory(private val repository: ProjectRepository) : ViewModelProvider.Factory {
+class HomeViewModelFactory(
+    private val application: Application,
+    private val repository: ProjectRepository
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(HomeViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return HomeViewModel(repository) as T
+            return HomeViewModel(application, repository) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

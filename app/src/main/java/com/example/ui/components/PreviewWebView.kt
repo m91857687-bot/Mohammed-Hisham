@@ -5,6 +5,8 @@ import android.graphics.Color
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -21,80 +23,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.webkit.WebViewAssetLoader
+import java.io.File
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun PreviewWebView(
-    htmlContent: String,
-    cssContent: String,
-    jsContent: String,
+    projectId: Int,
     onConsoleMessage: (String, String) -> Unit,
     modifier: Modifier = Modifier,
     previewWidth: Int? = null,
     previewHeight: Int? = null,
     previewZoom: Float = 1f
 ) {
-    val combinedHtml = remember(htmlContent, cssContent, jsContent) {
-        val hasHtmlTag = htmlContent.contains("<html", ignoreCase = true)
-        val hasHeadTag = htmlContent.contains("<head", ignoreCase = true)
-        val hasBodyTag = htmlContent.contains("<body", ignoreCase = true)
-        val hasMetaCharset = htmlContent.contains("<meta charset=", ignoreCase = true)
-        val hasMetaViewport = htmlContent.contains("<meta name=\"viewport\"", ignoreCase = true)
-
-        val metaCharset = if (!hasMetaCharset) "<meta charset=\"UTF-8\">\n" else ""
-        val metaViewport = if (!hasMetaViewport) "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=5.0\">\n" else ""
-        
-        val styleTag = "<style>\n$cssContent\n</style>\n"
-        val scriptTag = """
-            <script>
-                window.onerror = function(message, source, lineno, colno, error) {
-                    console.error("Error: " + message + " at line " + lineno);
-                    return true;
-                };
-                try {
-                    $jsContent
-                } catch(e) {
-                    console.error("Runtime Error: " + e.message);
-                }
-            </script>
-        """.trimIndent()
-
-        if (hasHtmlTag) {
-            var modifiedHtml = htmlContent
-            if (hasHeadTag) {
-                modifiedHtml = modifiedHtml.replaceFirst(Regex("</head>", RegexOption.IGNORE_CASE), "$metaCharset$metaViewport$styleTag</head>")
-            } else {
-                modifiedHtml = modifiedHtml.replaceFirst(Regex("(<html[^>]*>)", RegexOption.IGNORE_CASE), "$1\n<head>\n$metaCharset$metaViewport$styleTag</head>")
-            }
-            if (hasBodyTag) {
-                modifiedHtml = modifiedHtml.replaceFirst(Regex("</body>", RegexOption.IGNORE_CASE), "$scriptTag\n</body>")
-            } else {
-                modifiedHtml = modifiedHtml.replaceFirst(Regex("</html>", RegexOption.IGNORE_CASE), "<body>\n$scriptTag\n</body>\n</html>")
-            }
-            modifiedHtml
-        } else {
-            """
-            <!DOCTYPE html>
-            <html lang="ar" dir="auto">
-            <head>
-                $metaCharset
-                $metaViewport
-                $styleTag
-            </head>
-            <body>
-                $htmlContent
-                $scriptTag
-            </body>
-            </html>
-            """.trimIndent()
-        }
-    }
-
+    val context = LocalContext.current
     val isSimulatedDevice = previewWidth != null && previewHeight != null
     val verticalScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
+
+    val projectDir = remember(projectId) { File(context.filesDir, "projects/project_$projectId") }
+    val startUrl = "https://appassets.androidplatform.net/projects/project_$projectId/index.html"
 
     Box(
         modifier = modifier
@@ -127,8 +78,16 @@ fun PreviewWebView(
         ) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
-                factory = { context ->
-                    WebView(context).apply {
+                factory = { ctx ->
+                    val assetLoader = WebViewAssetLoader.Builder()
+                        .setDomain("appassets.androidplatform.net")
+                        .addPathHandler(
+                            "/projects/project_$projectId/",
+                            WebViewAssetLoader.InternalStoragePathHandler(ctx, projectDir)
+                        )
+                        .build()
+
+                    WebView(ctx).apply {
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
@@ -141,8 +100,8 @@ fun PreviewWebView(
                         settings.apply {
                             javaScriptEnabled = true
                             domStorageEnabled = true
-                            allowFileAccess = false
-                            allowContentAccess = false
+                            allowFileAccess = true
+                            allowContentAccess = true
                             defaultTextEncodingName = "UTF-8"
                             
                             useWideViewPort = true
@@ -153,7 +112,15 @@ fun PreviewWebView(
                             displayZoomControls = false
                         }
                         
-                        webViewClient = WebViewClient()
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(
+                                view: WebView?,
+                                request: WebResourceRequest?
+                            ): WebResourceResponse? {
+                                return assetLoader.shouldInterceptRequest(request!!.url)
+                            }
+                        }
+                        
                         webChromeClient = object : WebChromeClient() {
                             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                                 consoleMessage?.let {
@@ -164,10 +131,22 @@ fun PreviewWebView(
                                 return true
                             }
                         }
+                        
+                        // Error handling injection using Javascript Injection since we load standard files now
+                        val errorScript = """
+                            <script>
+                            window.onerror = function(message, source, lineno, colno, error) {
+                                console.error("Error: " + message + " at line " + lineno);
+                                return true;
+                            };
+                            </script>
+                        """.trimIndent()
+                        // Actually, with standard HTML, users should write their own, but WebView Console intercepts it anyway!
+                        // So no need to inject anything. The webChromeClient will catch console.error natively.
                     }
                 },
                 update = { webView ->
-                    webView.loadDataWithBaseURL("http://localhost/", combinedHtml, "text/html", "UTF-8", null)
+                    webView.loadUrl(startUrl)
                 }
             )
         }

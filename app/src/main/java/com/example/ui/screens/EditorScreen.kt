@@ -1,8 +1,14 @@
 package com.example.ui.screens
 
+import android.app.Application
+import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,11 +30,15 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.ProjectRepository
+import com.example.data.ZipUtil
 import com.example.ui.components.CodeEditor
 import com.example.ui.components.PreviewWebView
+import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -42,17 +52,32 @@ fun EditorScreen(
     repository: ProjectRepository,
     onNavigateBack: () -> Unit
 ) {
+    val context = LocalContext.current
+    val application = context.applicationContext as Application
     val viewModel: EditorViewModel = viewModel(
-        factory = EditorViewModelFactory(repository, projectId)
+        factory = EditorViewModelFactory(application, repository, projectId)
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     
     var consoleLogs by remember { mutableStateOf(listOf<ConsoleLog>()) }
     var showConsole by remember { mutableStateOf(false) }
+    var showNewFileDialog by remember { mutableStateOf(false) }
+    var showRenameImageDialog by remember { mutableStateOf<Uri?>(null) }
+    var renameImageName by remember { mutableStateOf("image.png") }
+
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            showRenameImageDialog = uri
+        }
+    }
 
     if (uiState.isLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -60,220 +85,299 @@ fun EditorScreen(
         }
         return
     }
-
     val project = uiState.project ?: return
 
-    Scaffold(
-        modifier = Modifier.onKeyEvent { keyEvent ->
-            if (keyEvent.isCtrlPressed && keyEvent.key == Key.S && keyEvent.type == KeyEventType.KeyUp) {
-                viewModel.saveProjectNow()
-                Toast.makeText(context, "Saved (Ctrl+S)", Toast.LENGTH_SHORT).show()
-                true
-            } else {
-                false
+    val exportProject = {
+        viewModel.saveCurrentFileNow()
+        val projectDir = File(context.filesDir, "projects/project_$projectId")
+        val zipFile = File(context.cacheDir, "${project.name}.zip")
+        try {
+            ZipUtil.zipDirectory(projectDir, zipFile)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", zipFile)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-        },
-        topBar = {
-            TopAppBar(
-                title = { 
-                    Column {
-                        Text(project.name, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            text = "WebCode Studio", 
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { 
-                        viewModel.saveProjectNow()
-                        Toast.makeText(context, "Saved Successfully", Toast.LENGTH_SHORT).show() 
-                    }) {
-                        Icon(Icons.Default.Save, contentDescription = "Save")
-                    }
-                    if (!isLandscape) {
-                        IconButton(onClick = { viewModel.togglePreview() }) {
-                            Icon(if (uiState.isPreviewing) Icons.Default.Code else Icons.Default.PlayArrow, contentDescription = "Toggle Preview")
+            context.startActivity(Intent.createChooser(intent, "Export Project"))
+        } catch (e: Exception) {
+            Toast.makeText(context, "Export Failed: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(
+                modifier = Modifier.width(300.dp),
+                drawerContainerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp)
+            ) {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    "Project Files", 
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                HorizontalDivider()
+                
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Files", style = MaterialTheme.typography.titleSmall)
+                    Row {
+                        IconButton(onClick = { imagePickerLauncher.launch("image/*") }) {
+                            Icon(Icons.Default.Image, contentDescription = "Import Image", tint = MaterialTheme.colorScheme.primary)
+                        }
+                        IconButton(onClick = { showNewFileDialog = true }) {
+                            Icon(Icons.Default.Add, contentDescription = "New File", tint = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }
-            )
-        },
-        bottomBar = {
-            if (!uiState.isPreviewing || isLandscape) {
-                BottomAppBar(modifier = Modifier.height(56.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        IconButton(onClick = {
-                            val code = when (uiState.currentTab) {
-                                EditorTab.HTML -> project.htmlContent
-                                EditorTab.CSS -> project.cssContent
-                                EditorTab.JS -> project.jsContent
+                
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(uiState.files) { file ->
+                        val isSelected = uiState.currentFile?.name == file.name
+                        val isImage = file.name.endsWith(".png") || file.name.endsWith(".jpg") || file.name.endsWith(".jpeg") || file.name.endsWith(".gif") || file.name.endsWith(".svg")
+                        
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { 
+                                    if (!isImage) {
+                                        viewModel.openFile(file)
+                                    } else {
+                                        Toast.makeText(context, "Cannot edit images directly", Toast.LENGTH_SHORT).show()
+                                    }
+                                    if (!isLandscape) {
+                                        scope.launch { drawerState.close() }
+                                    }
+                                }
+                                .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    when {
+                                        file.name.endsWith(".html") -> Icons.Default.Html
+                                        file.name.endsWith(".css") -> Icons.Default.Style
+                                        file.name.endsWith(".js") -> Icons.Default.Javascript
+                                        isImage -> Icons.Default.Image
+                                        else -> Icons.Default.InsertDriveFile
+                                    },
+                                    contentDescription = null,
+                                    tint = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    file.name, 
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                )
                             }
-                            clipboardManager.setText(AnnotatedString(code))
-                            Toast.makeText(context, "Copied exactly", Toast.LENGTH_SHORT).show()
+                            
+                            if (uiState.files.size > 1) {
+                                IconButton(onClick = { viewModel.deleteFile(file) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ) {
+        Scaffold(
+            modifier = Modifier.onKeyEvent { keyEvent ->
+                if (keyEvent.isCtrlPressed && keyEvent.key == Key.S && keyEvent.type == KeyEventType.KeyUp) {
+                    viewModel.saveCurrentFileNow()
+                    Toast.makeText(context, "Saved (Ctrl+S)", Toast.LENGTH_SHORT).show()
+                    true
+                } else {
+                    false
+                }
+            },
+            topBar = {
+                TopAppBar(
+                    title = { 
+                         Column {
+                            Text(project.name, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = uiState.currentFile?.name ?: "No file open", 
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { 
+                            scope.launch { drawerState.open() }
                         }) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
+                            Icon(Icons.Default.Folder, contentDescription = "Files")
                         }
-                        IconButton(onClick = { viewModel.clearCurrentFile() }) {
-                            Icon(Icons.Default.DeleteSweep, contentDescription = "Clear")
+                        IconButton(onClick = exportProject) {
+                            Icon(Icons.Default.Download, contentDescription = "Export Zip")
                         }
-                        IconButton(onClick = { viewModel.changeFontSize(2f) }) {
-                            Icon(Icons.Default.ZoomIn, contentDescription = "Zoom In")
+                        IconButton(onClick = { 
+                             viewModel.saveCurrentFileNow()
+                             Toast.makeText(context, "Saved Successfully", Toast.LENGTH_SHORT).show() 
+                         }) {
+                            Icon(Icons.Default.Save, contentDescription = "Save")
                         }
-                        IconButton(onClick = { viewModel.changeFontSize(-2f) }) {
-                            Icon(Icons.Default.ZoomOut, contentDescription = "Zoom Out")
+                        if (!isLandscape) {
+                            FilledTonalButton(
+                                onClick = { viewModel.togglePreview() },
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            ) {
+                                Icon(if (uiState.isPreviewing) Icons.Default.Code else Icons.Default.PlayArrow, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (uiState.isPreviewing) "Code" else "Run")
+                            }
                         }
                     }
+                )
+            },
+            bottomBar = {
+                if (!uiState.isPreviewing || isLandscape) {
+                    BottomAppBar(
+                        actions = {
+                            IconButton(onClick = { viewModel.changeFontSize(-2f) }) {
+                                Icon(Icons.Default.Remove, contentDescription = "Zoom Out")
+                            }
+                            IconButton(onClick = { viewModel.changeFontSize(2f) }) {
+                                Icon(Icons.Default.Add, contentDescription = "Zoom In")
+                            }
+                        }
+                    )
                 }
-            } else {
-                BottomAppBar(modifier = Modifier.height(56.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { viewModel.setPreviewSize(390, 844) }) {
-                                Icon(Icons.Default.Phone, contentDescription = "Phone")
+            }
+        ) { padding ->
+            val editorContent = @Composable {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    val language = when {
+                        uiState.currentFile?.name?.endsWith(".html") == true -> "html"
+                        uiState.currentFile?.name?.endsWith(".css") == true -> "css"
+                        uiState.currentFile?.name?.endsWith(".js") == true -> "js"
+                        else -> "txt"
+                    }
+                    
+                    CodeEditor(
+                        code = uiState.fileContent,
+                        onCodeChange = viewModel::updateFileContent,
+                        language = language,
+                        fontSize = uiState.fontSize,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            val previewContent = @Composable {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (isLandscape) {
+                        // Toolbar for preview in landscape
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row {
+                                IconButton(onClick = { viewModel.setPreviewSize(390, 844) }) {
+                                    Icon(Icons.Default.Phone, contentDescription = "Phone")
+                                }
+                                IconButton(onClick = { viewModel.setPreviewSize(768, 1024) }) {
+                                    Icon(Icons.Default.Tablet, contentDescription = "Tablet")
+                                }
+                                IconButton(onClick = { viewModel.setPreviewSize(null, null) }) {
+                                    Icon(Icons.Default.DesktopMac, contentDescription = "Desktop/Full")
+                                }
                             }
-                            IconButton(onClick = { viewModel.setPreviewSize(768, 1024) }) {
-                                Icon(Icons.Default.Tablet, contentDescription = "Tablet")
-                            }
-                            IconButton(onClick = { viewModel.setPreviewSize(null, null) }) {
-                                Icon(Icons.Default.DesktopMac, contentDescription = "Desktop/Full")
+                            IconButton(onClick = { showConsole = true }) {
+                                Icon(Icons.Default.Terminal, contentDescription = "Console", tint = if (consoleLogs.isNotEmpty()) MaterialTheme.colorScheme.error else LocalContentColor.current)
                             }
                         }
-                        Button(onClick = { showConsole = true }, modifier = Modifier.padding(end = 16.dp)) {
-                            Icon(Icons.Default.Terminal, contentDescription = "Console")
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Console (${consoleLogs.size})")
-                        }
+                    }
+                    Box(modifier = Modifier.weight(1f).background(MaterialTheme.colorScheme.background)) {
+                        PreviewWebView(
+                            projectId = projectId,
+                            previewWidth = uiState.previewWidth,
+                            previewHeight = uiState.previewHeight,
+                            previewZoom = uiState.previewZoom,
+                            onConsoleMessage = { level, msg ->
+                                consoleLogs = consoleLogs + ConsoleLog(level, msg, System.currentTimeMillis())
+                            }
+                        )
                     }
                 }
             }
-        }
-    ) { padding ->
-        val editorContent = @Composable {
-            Column(modifier = Modifier.fillMaxSize()) {
-                TabRow(selectedTabIndex = uiState.currentTab.ordinal) {
-                    Tab(
-                        selected = uiState.currentTab == EditorTab.HTML,
-                        onClick = { viewModel.setTab(EditorTab.HTML) },
-                        text = { Text("index.html") }
-                    )
-                    Tab(
-                        selected = uiState.currentTab == EditorTab.CSS,
-                        onClick = { viewModel.setTab(EditorTab.CSS) },
-                        text = { Text("style.css") }
-                    )
-                    Tab(
-                        selected = uiState.currentTab == EditorTab.JS,
-                        onClick = { viewModel.setTab(EditorTab.JS) },
-                        text = { Text("script.js") }
-                    )
-                }
 
-                Box(modifier = Modifier.weight(1f)) {
-                    when (uiState.currentTab) {
-                        EditorTab.HTML -> CodeEditor(
-                            code = project.htmlContent,
-                            onCodeChange = viewModel::updateHtml,
-                            language = "html",
-                            fontSize = uiState.fontSize
-                        )
-                        EditorTab.CSS -> CodeEditor(
-                            code = project.cssContent,
-                            onCodeChange = viewModel::updateCss,
-                            language = "css",
-                            fontSize = uiState.fontSize
-                        )
-                        EditorTab.JS -> CodeEditor(
-                            code = project.jsContent,
-                            onCodeChange = viewModel::updateJs,
-                            language = "js",
-                            fontSize = uiState.fontSize
-                        )
-                    }
-                }
-            }
-        }
-
-        val previewContent = @Composable {
-            Column(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
                 if (isLandscape) {
-                    // Toolbar for preview in landscape
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row {
-                            IconButton(onClick = { viewModel.setPreviewSize(390, 844) }) {
-                                Icon(Icons.Default.Phone, contentDescription = "Phone")
-                            }
-                            IconButton(onClick = { viewModel.setPreviewSize(768, 1024) }) {
-                                Icon(Icons.Default.Tablet, contentDescription = "Tablet")
-                            }
-                            IconButton(onClick = { viewModel.setPreviewSize(null, null) }) {
-                                Icon(Icons.Default.DesktopMac, contentDescription = "Desktop/Full")
-                            }
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            editorContent()
                         }
-                        IconButton(onClick = { showConsole = true }) {
-                            Icon(Icons.Default.Terminal, contentDescription = "Console", tint = if (consoleLogs.isNotEmpty()) MaterialTheme.colorScheme.error else LocalContentColor.current)
+                        HorizontalDivider(modifier = Modifier.fillMaxHeight().width(1.dp))
+                        Box(modifier = Modifier.weight(1f)) {
+                            previewContent()
                         }
                     }
-                }
-                Box(modifier = Modifier.weight(1f).background(MaterialTheme.colorScheme.background)) {
-                    PreviewWebView(
-                        htmlContent = project.htmlContent,
-                        cssContent = project.cssContent,
-                        jsContent = project.jsContent,
-                        previewWidth = uiState.previewWidth,
-                        previewHeight = uiState.previewHeight,
-                        previewZoom = uiState.previewZoom,
-                        onConsoleMessage = { level, msg ->
-                            consoleLogs = consoleLogs + ConsoleLog(level, msg, System.currentTimeMillis())
-                        }
-                    )
-                }
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            if (isLandscape) {
-                Row(modifier = Modifier.fillMaxSize()) {
-                    Box(modifier = Modifier.weight(1f)) {
+                } else {
+                    if (!uiState.isPreviewing) {
                         editorContent()
-                    }
-                    Divider(modifier = Modifier.fillMaxHeight().width(1.dp))
-                    Box(modifier = Modifier.weight(1f)) {
+                    } else {
                         previewContent()
                     }
                 }
-            } else {
-                if (!uiState.isPreviewing) {
-                    editorContent()
-                } else {
-                    previewContent()
-                }
             }
         }
+    }
+    
+    showRenameImageDialog?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { showRenameImageDialog = null },
+            title = { Text("Import Image") },
+            text = {
+                OutlinedTextField(
+                    value = renameImageName,
+                    onValueChange = { renameImageName = it },
+                    label = { Text("Filename (e.g. hero.png)") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (renameImageName.isNotBlank()) {
+                        viewModel.importImage(uri, renameImageName)
+                        showRenameImageDialog = null
+                        Toast.makeText(context, "Image Imported", Toast.LENGTH_SHORT).show()
+                    }
+                }) {
+                    Text("Import")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameImageDialog = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (showConsole) {
@@ -285,6 +389,37 @@ fun EditorScreen(
                 val allText = consoleLogs.joinToString("\n") { "[${it.level}] ${it.message}" }
                 clipboardManager.setText(AnnotatedString(allText))
                 Toast.makeText(context, "Copied all logs", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+    
+    if (showNewFileDialog) {
+        var fileName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showNewFileDialog = false },
+            title = { Text("New File") },
+            text = {
+                OutlinedTextField(
+                    value = fileName,
+                    onValueChange = { fileName = it },
+                    label = { Text("Filename (e.g. style.css)") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (fileName.isNotBlank()) {
+                        viewModel.createFile(fileName)
+                        showNewFileDialog = false
+                    }
+                }) {
+                    Text("Create")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewFileDialog = false }) {
+                    Text("Cancel")
+                }
             }
         )
     }
@@ -309,7 +444,6 @@ fun ConsoleDialog(
             .background(MaterialTheme.colorScheme.surface)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -332,9 +466,8 @@ fun ConsoleDialog(
                 }
             }
             
-            Divider()
+            HorizontalDivider()
             
-            // Logs
             if (logs.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("No logs yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -343,8 +476,8 @@ fun ConsoleDialog(
                 LazyColumn(modifier = Modifier.fillMaxSize().padding(8.dp)) {
                     items(logs) { log ->
                         val color = when (log.level) {
-                            "ERROR" -> Color(0xFFCF6679) // Red
-                            "WARNING" -> Color(0xFFE6C74D) // Yellow
+                            "ERROR" -> Color(0xFFCF6679)
+                            "WARNING" -> Color(0xFFE6C74D)
                             else -> MaterialTheme.colorScheme.onSurface
                         }
                         
@@ -367,7 +500,7 @@ fun ConsoleDialog(
                                 style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                                 color = color
                             )
-                            Divider(modifier = Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                            HorizontalDivider(modifier = Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                         }
                     }
                 }

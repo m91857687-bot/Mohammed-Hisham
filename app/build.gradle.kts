@@ -97,6 +97,7 @@ dependencies {
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
   
   implementation(libs.kotlinx.coroutines.android)
+  implementation("androidx.webkit:webkit:1.11.0")
   implementation(libs.kotlinx.coroutines.core)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
